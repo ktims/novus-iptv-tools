@@ -1,0 +1,22 @@
+[project]
+name = "novus-iptv-proxy"
+version = "0.1.0"
+description = "A lightweight FastAPI service to probe multicast IPTV streams, generate M3U playlists, and proxy XMLTV EPG data."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.28.0",
+    "requests>=2.31.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# This forces Hatchling to accept loose root scripts instead of looking for a module folder
+[tool.hatch.build.targets.wheel]
+packages = ["epg_service.py", "probe_channels.py", "generate_playlist.py"]
+
+[tool.uv]
+package = false # Explicitly instructs uv run/sync commands to skip packaging steps
