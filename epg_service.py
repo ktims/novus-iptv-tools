@@ -19,6 +19,7 @@ CSV_MAP_PATH = "multicast_map.csv"
 PROVIDER_API_BASE = "https://remotedvr.novusnow.ca/api/epg"
 LOGO_BASE_URL = "https://remotedvr.novusnow.ca/images/channel_logo"
 RTP2HTTPD_BASE = os.getenv("RTP2HTTPD_BASE")
+URL_BASE = os.getenv("URL_BASE")
 
 CHANNEL_GROUPS = [
     ((100, 199), "Major Networks"),
@@ -145,7 +146,10 @@ def get_playlist(proxy: bool = False):
     if not network_map:
         return Response(content="#EXTM3U\n# Local multicast map is missing or unreadable.", media_type="audio/x-mpegurl")
 
-    m3u_lines = ["#EXTM3U\n"]
+    m3u_lines = ["#EXTM3U"]
+    if URL_BASE:
+        m3u_lines += f" x-tvg-url={URL_BASE}/epg.xml"
+    m3u_lines += "\n"
 
     # 1. Map known channels returned from the provider API
     api_map_positions = set()
