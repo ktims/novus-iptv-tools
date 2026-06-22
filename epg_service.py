@@ -18,6 +18,7 @@ app = FastAPI(title="HTPC IPTV Proxy Engine")
 CSV_MAP_PATH = "multicast_map.csv"
 PROVIDER_API_BASE = "https://remotedvr.novusnow.ca/api/epg"
 LOGO_BASE_URL = "https://remotedvr.novusnow.ca/images/channel_logo"
+RTP2HTTPD_BASE = os.getenv("RTP2HTTPD_BASE")
 
 CHANNEL_GROUPS = [
     ((100, 199), "Major Networks"),
@@ -58,6 +59,14 @@ def determine_channel_group(tuner_pos: int) -> str:
         if lower <= tuner_pos <= upper:
             return group_name
     return "General"
+
+def stream_proxy_url(stream: dict) -> str:
+    """Constructs a proxy URL for the given RTP stream."""
+    return f"{RTP2HTTPD_BASE}/rtp/{stream['ip']}:{stream['port']}"
+
+def stream_rtp_url(stream: dict) -> str:
+    """Constructs a direct RTP URL for the given stream."""
+    return f"rtp://@{stream['ip']}:{stream['port']}"
 
 def fetch_provider_epg():
     """Loops through a 9-day sliding window (-1 day to +7 days) to build a combined EPG matrix."""
@@ -124,8 +133,11 @@ def startup_event():
     thread.start()
 
 @app.get("/playlist.m3u")
-def get_playlist():
+def get_playlist(proxy: bool = False):
     """Compiles the M3U playlist, sorting and including hidden unlisted multicast map streams."""
+    if proxy and not RTP2HTTPD_BASE:
+        return Response(content="#EXTM3U\n# RTP2HTTPD_BASE is not configured; cannot generate proxy playlist.", media_type="audio/x-mpegurl")
+
     with epg_cache["lock"]:
         api_channels = epg_cache["channels"]
 
@@ -144,13 +156,17 @@ def get_playlist():
         if tuner_pos is not None:
             tuner_pos = int(tuner_pos)
             if tuner_pos in network_map:
+                if proxy:
+                    stream = stream_proxy_url(network_map[tuner_pos])
+                else:
+                    stream = stream_rtp_url(network_map[tuner_pos])
                 api_map_positions.add(tuner_pos)
                 processed_channels.append({
                     "tuner_position": tuner_pos,
                     "id": ch.get("id", f"unlinked-{tuner_pos}"),
                     "display_name": ch.get("description", ch.get("serviceCollectionName", f"Channel {tuner_pos}")),
                     "logo_url": f"{LOGO_BASE_URL}/{ch['callNumber']}.png" if ch.get("callNumber") else "",
-                    "stream": network_map[tuner_pos]
+                    "stream": stream
                 })
 
     # 2. Fallback: Find raw streams discovered via network probe that were skipped by the API
@@ -158,13 +174,16 @@ def get_playlist():
         if raw_tuner_pos not in api_map_positions:
             group_name = determine_channel_group(raw_tuner_pos)
             logger.info(f"Synthesizing unlisted fallback definition for Channel {raw_tuner_pos} ({group_name})")
-
+            if proxy:
+                stream = stream_proxy_url(stream_info)
+            else:
+                stream = stream_rtp_url(stream_info)
             processed_channels.append({
                 "tuner_position": raw_tuner_pos,
                 "id": f"raw-{raw_tuner_pos}",
                 "display_name": f"Unlisted Channel {raw_tuner_pos}",
                 "logo_url": "",  # No call number to extrapolate logo from
-                "stream": stream_info
+                "stream": stream
             })
 
     # 3. Sort the combined structural list numerically by channel number
@@ -177,7 +196,7 @@ def get_playlist():
 
         m3u_lines.append(
             f'#EXTINF:0 tvg-chno="{ch["tuner_position"]}" tvg-logo="{ch["logo_url"]}" tvg-id="{ch["id"]}" group-title="{group_title}",{ch["display_name"]}\n'
-            f'rtp://@{stream["ip"]}:{stream["port"]}\n'
+            f'{stream}\n'
         )
 
     return Response(content="".join(m3u_lines), media_type="audio/x-mpegurl")
